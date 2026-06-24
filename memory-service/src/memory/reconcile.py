@@ -34,7 +34,6 @@ def main() -> None:
     from memory.config import Settings
     from memory.db import apply_schema, connect
     from memory.embeddings.factory import build_embedder
-    from memory.parser.python_parser import PythonParser
 
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     settings = Settings.from_env()
@@ -43,7 +42,7 @@ def main() -> None:
     repo = Repository(conn)
     repo.ensure_embedding_config("code", settings.code_embed.provider, settings.code_embed.model, settings.code_embed.dim)
     repo.ensure_embedding_config("doc", settings.doc_embed.provider, settings.doc_embed.model, settings.doc_embed.dim)
-    worker = Worker(repo, build_embedder(settings.code_embed), build_embedder(settings.doc_embed), PythonParser())
+    worker = Worker(repo, build_embedder(settings.code_embed), build_embedder(settings.doc_embed))
     print(reconcile(repo, worker, root))
 
 

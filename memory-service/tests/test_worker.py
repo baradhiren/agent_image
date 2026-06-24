@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from memory.embeddings.local import LocalEmbeddingProvider
-from memory.parser.python_parser import PythonParser
 from memory.repository import Repository
 from memory.worker import Worker, content_hash
 
@@ -9,7 +8,7 @@ EMB = LocalEmbeddingProvider()
 
 
 def _worker(conn):
-    return Worker(Repository(conn), EMB, EMB, PythonParser())
+    return Worker(Repository(conn), EMB, EMB)
 
 
 def test_content_hash_stable():
@@ -39,7 +38,7 @@ def test_drain_processes_queue_and_closure(conn, tmp_path: Path):
     repo = Repository(conn)
     repo.enqueue("sha1", "payment.py")
     repo.enqueue("sha1", "checkout.py")
-    result = Worker(repo, EMB, EMB, PythonParser()).drain(str(tmp_path))
+    result = Worker(repo, EMB, EMB).drain(str(tmp_path))
     assert set(result["ingested"]) == {"payment.py", "checkout.py"}
     assert {c["src_qualname"] for c in repo.impact_of("process")} == {"order"}
     assert repo.dequeue_pending() == []

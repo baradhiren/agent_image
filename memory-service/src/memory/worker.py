@@ -3,7 +3,7 @@ from pathlib import Path
 
 from memory.chunking import chunk_code, chunk_docs
 from memory.embeddings.base import EmbeddingProvider
-from memory.parser.base import LanguageParser
+from memory.parser.registry import code_parser_for
 from memory.repository import Repository
 
 
@@ -17,12 +17,10 @@ class Worker:
         repo: Repository,
         code_embedder: EmbeddingProvider,
         doc_embedder: EmbeddingProvider,
-        parser: LanguageParser,
     ) -> None:
         self._repo = repo
         self._code_embedder = code_embedder
         self._doc_embedder = doc_embedder
-        self._parser = parser
 
     def process_file(self, root: str, rel_path: str) -> str:
         abs_path = Path(root) / rel_path
@@ -36,9 +34,11 @@ class Worker:
         if self._repo.file_hash(rel_path) == digest:
             return "skipped"
 
-        if rel_path.endswith(".py"):
-            parsed = self._parser.parse(rel_path, text)
-            file_id = self._repo.upsert_file_row(rel_path, "python", digest)
+        entry = code_parser_for(rel_path)
+        if entry is not None:
+            language, parser = entry
+            parsed = parser.parse(rel_path, text)
+            file_id = self._repo.upsert_file_row(rel_path, language, digest)
             self._repo.replace_structure(file_id, parsed)
             self._repo.resolve_pending_edges()  # closure
             self._repo.sync_code_chunks(file_id, chunk_code(parsed), self._code_embedder)

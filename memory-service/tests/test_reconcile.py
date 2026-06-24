@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from memory.embeddings.local import LocalEmbeddingProvider
-from memory.parser.python_parser import PythonParser
 from memory.reconcile import reconcile, scan_paths
 from memory.repository import Repository
 from memory.worker import Worker
@@ -19,7 +18,7 @@ def test_scan_paths(tmp_path: Path):
 def test_reconcile_removes_orphans_and_prunes(conn, tmp_path: Path):
     (tmp_path / "svc.py").write_text("def helper():\n    return 1\n")
     repo = Repository(conn)
-    worker = Worker(repo, EMB, EMB, PythonParser())
+    worker = Worker(repo, EMB, EMB)
     worker.process_file(str(tmp_path), "svc.py")
     repo.add_spec_link("specs/x.md", "helper")
     repo.upsert_file_row("gone.py", "python", "h")   # orphan
