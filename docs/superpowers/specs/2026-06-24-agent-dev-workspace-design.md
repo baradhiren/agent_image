@@ -47,7 +47,7 @@ high-leverage gates.
 | Agent runtime | Generic, MCP-based | Works with all open/closed models; MCP is the universal integration point. |
 | Project delivery | Bind-mounted into container | Source of truth stays on host; container is disposable. |
 | Retrieval need | Code-understanding **and** doc/spec RAG, equally | → pgvector as center of gravity, structure-first. |
-| Embeddings | Pluggable, **local default** | Code never leaves the box by default; switchable to API. |
+| Embeddings | External service, **per-collection pluggable**; default self-hosted TEI | Model-free images; code/docs models chosen independently; code stays on the box by default. |
 | Memory sync | **Auto on git commit** (incremental) | Memory tracks committed state cheaply; commits are the unit of durable change. |
 | Orchestration | Workers now, interface stubbed | Ships a testable unit fast; orchestration layers on later without redesign. |
 | Language toolchains | **Not baked in** | Image stays lean; project `specs/` declare the toolset, agent installs at bootstrap (§6.1). |
@@ -108,20 +108,60 @@ grows (it returns more irrelevant chunks faster), the opposite of what scaling r
 comes from precision, not throughput.
 
 **The three layers (one Postgres + pgvector):**
-1. **Structure graph** — tables for files, symbols (functions/classes), and edges (calls, imports,
-   contains). Answers "what calls `payment.process()` and what breaks if I change it" — a query that gets
-   *more* valuable as the code grows. Traversal via recursive CTEs.
+1. **Structure graph** — tables for files, symbols (functions/classes), and **resolved edges**
+   (`symbol → symbol`, with `calls`/`imports`/`contains` kinds; unresolved/external calls keep a name and a
+   resolution status). Answers "what calls `payment.process()` and what breaks if I change it" — a query
+   that gets *more* valuable as the code grows. Resolved edges (not name-based) are what make `impact_of`
+   precise and make the closure step below correct.
 2. **Semantic layer** — pgvector embeddings of code chunks **and** doc/spec chunks in the same DB, so a
    single query returns a function *plus* the spec paragraph that defines it.
-3. **Linkage layer** — explicit `spec ↔ symbol ↔ code` edges. This is the antidote to stale-snapshot
-   hallucination: agents resolve against current, linked structure, not loose text.
+3. **Linkage layer** — explicit `spec ↔ symbol ↔ code` edges. The antidote to stale-snapshot hallucination:
+   agents resolve against current, linked structure, not loose text. Linkage is invalidated on re-ingest and
+   pruned of dangling references by the reconcile job (below), so it cannot silently drift.
 
-**Ingestion pipeline:** `parse (tree-sitter) → chunk → embed → upsert (structure + vectors + linkage)`.
-**Incremental, triggered by a git post-commit hook** that re-ingests only changed files.
+**Ingestion pipeline (decoupled, drift-correct):**
 
-**Embeddings:** pluggable provider behind a stable interface; **local model default** (a code-aware model
-for code, a general model for docs; pgvector stores multiple collections / dimensions). Switchable to an
-API provider via config when top-tier quality is wanted.
+```
+git post-commit hook  →  enqueue {changed_files, commit_sha}        [fast, returns immediately]
+
+worker drains the queue:
+  parse (tree-sitter)                  # AST per changed file
+  → chunk on AST nodes                 # function/class boundaries + file>class>fn breadcrumb + docstring;
+                                       #   oversized functions split on inner-block boundaries, never mid-statement
+  → diff by chunk content-hash         # skip chunks whose normalized semantics did not change
+  → embed (batched, local)             # only new/changed chunks — the slow, costly step runs minimally
+  → upsert: structure + vectors + linkage
+  → recompute reverse-dependency edges # re-resolve edges whose target names changed in this file (closure)
+
+periodic reconcile job  →  full re-scan, re-resolve all edges, prune dangling spec links   [drift safety net]
+```
+
+Four properties this buys, each addressing a specific failure:
+- **Closure, not just changed files.** A changed signature invalidates *dependents whose own bytes did not
+  change*. The worker re-resolves every edge whose target name changed in the ingested file — a cheap query
+  against the structure graph — so the index does not drift as the codebase grows more interconnected.
+- **Semantic-boundary chunks.** AST-node boundaries (plus structural breadcrumb) mean a function retrieves
+  as one idea, not two half-meanings. This does more for retrieval precision than any embedding-model upgrade.
+- **Chunk-level hashing.** Reformatting or an unrelated rename leaves a function's semantics untouched;
+  per-chunk content hashes skip re-embedding it. The difference between a 2-second hook and one you dread.
+- **Enqueue, don't embed, in the hook.** The hook does one fast thing (write to the queue) and returns; a
+  failed embedding can never wedge a commit, and the worker gets free batching and a retry boundary. The
+  reconcile job catches anything the incremental path missed (`--no-verify` commits, rebases, cross-branch
+  merges).
+
+The queue is a **plain Postgres table** (`ingest_queue`) drained by a worker process — same decoupling,
+batching, and retry boundary as a message broker, with zero added infrastructure for a single-dev setup.
+
+**Embeddings (external, model-free images):** the embedding **model runs as a separate service**, never
+baked into the DB or worker images. A pluggable `EmbeddingProvider` is selected **per collection** — the
+user can choose a different model for code than for docs (e.g. a code-aware model for code, a general model
+for docs), local or hosted. The default backend is **self-hosted TEI** (Hugging Face Text Embeddings
+Inference) so the secure "code never leaves the box" property holds out of the box; a local in-process
+`fastembed` provider is retained as the offline/test default. Because a pgvector column's dimension is
+fixed, each collection (`code`, `doc`) has its **own configured dimension**, and the `(collection →
+provider, model, dim)` triple is recorded in an `embedding_config` table. On ingest, a mismatch against the
+recorded config is **refused** (not silently mixed): swapping a model requires a reconcile/re-embed. This
+makes the dimension constraint explicit and safe rather than a silent corruption footgun.
 
 **MCP surface (what agents call instead of re-reading the repo):**
 `search_code`, `search_docs`, `get_symbol`, `impact_of(symbol)`, `spec_for(symbol)`, `add_knowledge`.
@@ -234,7 +274,7 @@ Each axis has a **default** and a **single defined escalation**, so growth is a 
 |---|---|---|---|
 | Retrieval | pgvector | repo > ~10–50M vectors | Qdrant / graph store per project, same MCP interface |
 | Isolation | rootless container | untrusted deps appear | Apple `container` micro-VM per task |
-| Embeddings | local model | want top-tier quality | API provider via config |
+| Embeddings | self-hosted TEI (model-free images) | want code-aware code retrieval / top quality | swap the per-collection model or point to a hosted API via config (+ re-embed) |
 | Orchestration | stubbed `tasks` interface | need autonomous hand-off | full orchestrator role |
 | Toolset | bootstrap-from-spec | fetch cost too high | project-specific pre-baked image |
 
