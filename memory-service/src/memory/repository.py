@@ -46,3 +46,41 @@ class Repository:
 
     def list_db_files(self) -> list[str]:
         return [r[0] for r in self._conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
+
+    def resolve_pending_edges(self) -> None:
+        by_name: dict[str, list[int]] = {}
+        for name, sid in self._conn.execute("SELECT name, id FROM symbols").fetchall():
+            by_name.setdefault(name, []).append(sid)
+        pending = self._conn.execute(
+            "SELECT id, dst_name FROM edges "
+            "WHERE kind = 'calls' AND (resolution = 'pending' OR dst_symbol_id IS NULL)"
+        ).fetchall()
+        for edge_id, dst_name in pending:
+            matches = by_name.get(dst_name, [])
+            if len(matches) == 1:
+                self._conn.execute(
+                    "UPDATE edges SET dst_symbol_id = %s, resolution = 'resolved' WHERE id = %s",
+                    (matches[0], edge_id),
+                )
+            else:
+                resolution = "ambiguous" if len(matches) > 1 else "external"
+                self._conn.execute(
+                    "UPDATE edges SET dst_symbol_id = NULL, resolution = %s WHERE id = %s",
+                    (resolution, edge_id),
+                )
+
+    def reresolve_all_edges(self) -> None:
+        self._conn.execute(
+            "UPDATE edges SET dst_symbol_id = NULL, resolution = 'pending' WHERE kind = 'calls'"
+        )
+        self.resolve_pending_edges()
+
+    def impact_of(self, qualname: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT e.src_qualname, f.path FROM edges e "
+            "JOIN files f ON f.id = e.file_id "
+            "WHERE e.kind = 'calls' AND e.dst_symbol_id IN "
+            "(SELECT id FROM symbols WHERE qualname = %s)",
+            (qualname,),
+        ).fetchall()
+        return [{"src_qualname": r[0], "path": r[1]} for r in rows]
