@@ -138,3 +138,86 @@ class Repository:
         else:
             self._conn.execute("DELETE FROM doc_chunks WHERE path = %s", (path,))
         return len(to_embed)
+
+    def search_code(self, query_embedding, k: int = 5) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT c.qualname, f.path, c.text FROM code_chunks c "
+            "JOIN files f ON f.id = c.file_id ORDER BY c.embedding <=> %s::vector LIMIT %s",
+            (query_embedding, k),
+        ).fetchall()
+        return [{"qualname": r[0], "path": r[1], "text": r[2]} for r in rows]
+
+    def search_docs(self, query_embedding, k: int = 5) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT path, text FROM doc_chunks ORDER BY embedding <=> %s::vector LIMIT %s",
+            (query_embedding, k),
+        ).fetchall()
+        return [{"path": r[0], "text": r[1]} for r in rows]
+
+    def get_symbol(self, qualname: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT s.qualname, s.name, s.kind, f.path, s.start_line, s.end_line "
+            "FROM symbols s JOIN files f ON f.id = s.file_id WHERE s.qualname = %s LIMIT 1",
+            (qualname,),
+        ).fetchone()
+        if not row:
+            return None
+        return {"qualname": row[0], "name": row[1], "kind": row[2],
+                "path": row[3], "start_line": row[4], "end_line": row[5]}
+
+    def add_spec_link(self, spec_path: str, symbol_qualname: str) -> None:
+        self._conn.execute(
+            "INSERT INTO spec_links (spec_path, symbol_qualname) VALUES (%s, %s)",
+            (spec_path, symbol_qualname),
+        )
+
+    def spec_for(self, qualname: str) -> list[str]:
+        return [
+            r[0]
+            for r in self._conn.execute(
+                "SELECT spec_path FROM spec_links WHERE symbol_qualname = %s ORDER BY spec_path",
+                (qualname,),
+            ).fetchall()
+        ]
+
+    def prune_spec_links(self) -> int:
+        return self._conn.execute(
+            "DELETE FROM spec_links WHERE symbol_qualname NOT IN (SELECT qualname FROM symbols)"
+        ).rowcount
+
+    def enqueue(self, commit_sha: str, rel_path: str) -> None:
+        self._conn.execute(
+            "INSERT INTO ingest_queue (commit_sha, rel_path) VALUES (%s, %s)", (commit_sha, rel_path)
+        )
+
+    def dequeue_pending(self, limit: int = 100) -> list[tuple[int, str]]:
+        return [
+            (r[0], r[1])
+            for r in self._conn.execute(
+                "SELECT id, rel_path FROM ingest_queue WHERE status = 'pending' ORDER BY id LIMIT %s",
+                (limit,),
+            ).fetchall()
+        ]
+
+    def mark_done(self, ids: list[int]) -> None:
+        if ids:
+            self._conn.execute("UPDATE ingest_queue SET status = 'done' WHERE id = ANY(%s)", (ids,))
+
+    def get_embedding_config(self, collection: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT provider, model, dim FROM embedding_config WHERE collection = %s", (collection,)
+        ).fetchone()
+        return None if not row else {"provider": row[0], "model": row[1], "dim": row[2]}
+
+    def ensure_embedding_config(self, collection: str, provider: str, model: str, dim: int) -> None:
+        existing = self.get_embedding_config(collection)
+        wanted = {"provider": provider, "model": model, "dim": dim}
+        if existing is None:
+            self._conn.execute(
+                "INSERT INTO embedding_config (collection, provider, model, dim) VALUES (%s, %s, %s, %s)",
+                (collection, provider, model, dim),
+            )
+        elif existing != wanted:
+            raise EmbeddingConfigMismatch(
+                f"{collection}: stored {existing} != configured {wanted}; reconcile/re-embed required"
+            )
