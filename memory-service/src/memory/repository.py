@@ -84,3 +84,57 @@ class Repository:
             (qualname,),
         ).fetchall()
         return [{"src_qualname": r[0], "path": r[1]} for r in rows]
+
+    def sync_code_chunks(self, file_id: int, chunks, embedder) -> int:
+        existing = {
+            r[0]: r[1]
+            for r in self._conn.execute(
+                "SELECT chunk_key, content_hash FROM code_chunks WHERE file_id = %s", (file_id,)
+            ).fetchall()
+        }
+        to_embed = [c for c in chunks if existing.get(c.chunk_key) != c.content_hash]
+        vectors = embedder.embed([c.text for c in to_embed]) if to_embed else []
+        vec_by_key = {c.chunk_key: v for c, v in zip(to_embed, vectors)}
+        for c in chunks:
+            if c.chunk_key in vec_by_key:
+                self._conn.execute(
+                    "INSERT INTO code_chunks (file_id, chunk_key, qualname, content_hash, text, embedding) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (file_id, chunk_key) DO UPDATE SET qualname = EXCLUDED.qualname, "
+                    "content_hash = EXCLUDED.content_hash, text = EXCLUDED.text, embedding = EXCLUDED.embedding",
+                    (file_id, c.chunk_key, c.qualname, c.content_hash, c.text, vec_by_key[c.chunk_key]),
+                )
+        keys = [c.chunk_key for c in chunks]
+        if keys:
+            self._conn.execute(
+                "DELETE FROM code_chunks WHERE file_id = %s AND chunk_key <> ALL(%s)", (file_id, keys)
+            )
+        else:
+            self._conn.execute("DELETE FROM code_chunks WHERE file_id = %s", (file_id,))
+        return len(to_embed)
+
+    def sync_doc_chunks(self, path: str, chunks, embedder) -> int:
+        existing = {
+            r[0]: r[1]
+            for r in self._conn.execute(
+                "SELECT chunk_key, content_hash FROM doc_chunks WHERE path = %s", (path,)
+            ).fetchall()
+        }
+        to_embed = [c for c in chunks if existing.get(c.chunk_key) != c.content_hash]
+        vectors = embedder.embed([c.text for c in to_embed]) if to_embed else []
+        vec_by_key = {c.chunk_key: v for c, v in zip(to_embed, vectors)}
+        for c in chunks:
+            if c.chunk_key in vec_by_key:
+                self._conn.execute(
+                    "INSERT INTO doc_chunks (path, chunk_key, content_hash, text, embedding) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (path, chunk_key) DO UPDATE SET content_hash = EXCLUDED.content_hash, "
+                    "text = EXCLUDED.text, embedding = EXCLUDED.embedding",
+                    (path, c.chunk_key, c.content_hash, c.text, vec_by_key[c.chunk_key]),
+                )
+        keys = [c.chunk_key for c in chunks]
+        if keys:
+            self._conn.execute("DELETE FROM doc_chunks WHERE path = %s AND chunk_key <> ALL(%s)", (path, keys))
+        else:
+            self._conn.execute("DELETE FROM doc_chunks WHERE path = %s", (path,))
+        return len(to_embed)
