@@ -48,15 +48,17 @@ class Repository:
         return [r[0] for r in self._conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
 
     def resolve_pending_edges(self) -> None:
-        by_name: dict[str, list[int]] = {}
-        for name, sid in self._conn.execute("SELECT name, id FROM symbols").fetchall():
-            by_name.setdefault(name, []).append(sid)
+        by_lang_name: dict[tuple[str, str], list[int]] = {}
+        for language, name, sid in self._conn.execute(
+            "SELECT f.language, s.name, s.id FROM symbols s JOIN files f ON f.id = s.file_id"
+        ).fetchall():
+            by_lang_name.setdefault((language, name), []).append(sid)
         pending = self._conn.execute(
-            "SELECT id, dst_name FROM edges "
-            "WHERE kind = 'calls' AND (resolution = 'pending' OR dst_symbol_id IS NULL)"
+            "SELECT e.id, e.dst_name, f.language FROM edges e JOIN files f ON f.id = e.file_id "
+            "WHERE e.kind = 'calls' AND (e.resolution = 'pending' OR e.dst_symbol_id IS NULL)"
         ).fetchall()
-        for edge_id, dst_name in pending:
-            matches = by_name.get(dst_name, [])
+        for edge_id, dst_name, language in pending:
+            matches = by_lang_name.get((language, dst_name), [])
             if len(matches) == 1:
                 self._conn.execute(
                     "UPDATE edges SET dst_symbol_id = %s, resolution = 'resolved' WHERE id = %s",
