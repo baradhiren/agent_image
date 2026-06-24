@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fast: enqueue files changed in the last commit. No embedding here.
+# Install: cp memory-service/hooks/post-commit <project>/.git/hooks/ && chmod +x.
+# Requires DATABASE_URL to point at the memory Postgres.
+set -euo pipefail
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+uv run --project "${MEMORY_SERVICE_DIR:-memory-service}" python -m memory.enqueue "$PROJECT_ROOT"

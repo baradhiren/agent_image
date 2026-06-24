@@ -26,3 +26,26 @@ def reconcile(repo: Repository, worker: Worker, root: str) -> dict:
     repo.reresolve_all_edges()
     pruned = repo.prune_spec_links()
     return {"processed": len(on_disk), "removed": removed, "pruned_links": pruned}
+
+
+def main() -> None:
+    import sys
+
+    from memory.config import Settings
+    from memory.db import apply_schema, connect
+    from memory.embeddings.factory import build_embedder
+    from memory.parser.python_parser import PythonParser
+
+    root = sys.argv[1] if len(sys.argv) > 1 else "."
+    settings = Settings.from_env()
+    conn = connect(settings)
+    apply_schema(conn, settings.code_embed.dim, settings.doc_embed.dim)
+    repo = Repository(conn)
+    repo.ensure_embedding_config("code", settings.code_embed.provider, settings.code_embed.model, settings.code_embed.dim)
+    repo.ensure_embedding_config("doc", settings.doc_embed.provider, settings.doc_embed.model, settings.doc_embed.dim)
+    worker = Worker(repo, build_embedder(settings.code_embed), build_embedder(settings.doc_embed), PythonParser())
+    print(reconcile(repo, worker, root))
+
+
+if __name__ == "__main__":
+    main()

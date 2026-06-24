@@ -15,5 +15,48 @@ services:
       timeout: 3s
       retries: 20
 
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    command: ["--model-id", "BAAI/bge-small-en-v1.5"]
+    ports:
+      - "8080:80"
+
+  memory:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
+      CODE_EMBED_PROVIDER: remote
+      CODE_EMBED_URL: http://embeddings:80
+      CODE_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      CODE_EMBED_DIM: "384"
+      DOC_EMBED_PROVIDER: remote
+      DOC_EMBED_URL: http://embeddings:80
+      DOC_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      DOC_EMBED_DIM: "384"
+    stdin_open: true
+    tty: true
+
+  worker:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
+      CODE_EMBED_PROVIDER: remote
+      CODE_EMBED_URL: http://embeddings:80
+      CODE_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      CODE_EMBED_DIM: "384"
+      DOC_EMBED_PROVIDER: remote
+      DOC_EMBED_URL: http://embeddings:80
+      DOC_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      DOC_EMBED_DIM: "384"
+    volumes:
+      - ${PROJECT_DIR:-./}:/project:ro
+    command: ["uv", "run", "python", "-m", "memory.run_worker", "/project"]
+
 volumes:
   pgdata:
