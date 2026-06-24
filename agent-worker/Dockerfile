@@ -1,0 +1,46 @@
+FROM python:3.12-slim
+
+# Universal tools + Node 20 (Claude Code is an npm package) + GitHub CLI.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg git ripgrep fd-find jq \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh \
+ && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
+ && rm -rf /var/lib/apt/lists/*
+
+# uv (installs + runs the memory MCP server).
+RUN pip install --no-cache-dir uv
+
+# Claude Code CLI (the bundled reference MCP client).
+RUN npm install -g @anthropic-ai/claude-code
+
+# Memory MCP server: EDITABLE install so db.py resolves ../sql/001_schema.sql
+# via Path(__file__).resolve().parents[2] / "sql".
+COPY memory-service/pyproject.toml /opt/memory/pyproject.toml
+COPY memory-service/uv.lock        /opt/memory/uv.lock
+COPY memory-service/src            /opt/memory/src
+COPY memory-service/sql            /opt/memory/sql
+RUN cd /opt/memory && uv sync
+
+# Baked role config, skills, and the entrypoint.
+COPY agent-worker/config        /opt/agent-worker/config
+COPY agent-worker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Non-root user.
+RUN useradd --create-home --shell /bin/bash agent
+USER agent
+WORKDIR /workspace
+
+ENV CONFIG_DIR=/opt/agent-worker/config \
+    MEMORY_PYTHON=/opt/memory/.venv/bin/python
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]
