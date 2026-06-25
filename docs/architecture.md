@@ -1,0 +1,241 @@
+# Architecture
+
+This document explains how the agentic-development environment works — its
+inputs and outputs, what is shared across containers, where the agent works,
+where data is stored, and how the secret (your Claude subscription token) is
+passed. It starts with a plain-English mental model, then drills into runtime
+topology, the image build, and the two main data flows.
+
+## Why this exists
+
+The environment solves three problems that get worse as a project grows
+(see [GOAL.md], which is intentionally untracked):
+
+1. **No shared memory across agent sessions** — each session starts blind.
+2. **Wasted context** re-supplying project information every session.
+3. **Hallucinations** as historical knowledge fades.
+
+It fixes them with a persistent, always-on **memory** (a map of your code plus
+searchable embeddings) that AI agents consult — and write back to — instead of
+guessing.
+
+## The 30-second mental model
+
+The system has **two halves**:
+
+- **🧠 A persistent "memory" half** that is always on. It holds everything known
+  about your project — a structure graph of the code plus semantic embeddings —
+  in a database that survives restarts.
+- **🤖 An ephemeral "agent" half** that you spin up to do a task. The AI agent
+  (Claude Code) works on your project mounted into the container, and it
+  *consults the memory* instead of guessing.
+
+```mermaid
+flowchart TB
+    subgraph HOST["🖥️ Your Mac"]
+        DEV["👤 You"]
+        PROJ["📁 Your project<br/>source code + specs"]
+        ENV["🔑 .env<br/>Claude subscription token"]
+    end
+
+    subgraph PERSIST["🧠 Persistent Memory Plane — always on"]
+        MEM[("Knowledge store:<br/>code graph + embeddings + docs")]
+    end
+
+    subgraph EPHEM["🤖 Ephemeral Work Plane — per task"]
+        AGENT["AI Agent<br/>Claude Code"]
+    end
+
+    DEV -->|"asks for a task"| AGENT
+    ENV -->|"authenticates"| AGENT
+    PROJ -->|"mounted into"| AGENT
+    PROJ -->|"continuously ingested into"| MEM
+    AGENT <-->|"'what do I already know?'<br/>+ saves new knowledge"| MEM
+    AGENT -->|"reads & edits files"| PROJ
+```
+
+## Diagram 1 — Runtime topology (what runs where, what is shared)
+
+Every container, the volumes that persist data, the shared network, and how the
+secret is passed.
+
+```mermaid
+flowchart TB
+    subgraph HOST["🖥️ Host machine"]
+        ENVFILE["🔑 .env file<br/>CLAUDE_CODE_OAUTH_TOKEN"]
+        PROJDIR["📁 PROJECT_DIR<br/>your repo on disk"]
+        GIT["⌨️ git commit<br/>post-commit hook"]
+    end
+
+    subgraph DOCKER["🐳 Docker — shared compose network"]
+        direction TB
+
+        subgraph AW["📦 agent-worker container"]
+            CLAUDE["🤖 Claude Code agent<br/>works in /workspace"]
+            MCP["🔌 memory MCP server<br/>spawned subprocess"]
+        end
+
+        subgraph WK["📦 worker container"]
+            WORKER["⚙️ ingest worker<br/>reads /project read-only"]
+        end
+
+        subgraph EMB["📦 embeddings container"]
+            FE["🧮 fastembed HTTP service<br/>port 80, /embed"]
+        end
+
+        subgraph DBC["📦 db container"]
+            PG[("🗄️ Postgres + pgvector<br/>port 5432")]
+        end
+    end
+
+    subgraph VOL["💾 Docker volumes — survive restarts"]
+        PGDATA[("pgdata<br/>database files")]
+        MISE[("mise-data<br/>toolchain cache")]
+    end
+
+    ENVFILE -->|"injected as env var<br/>(agent-worker ONLY)"| CLAUDE
+    PROJDIR -->|"mounted READ-WRITE at /workspace"| CLAUDE
+    PROJDIR -->|"mounted READ-ONLY at /project"| WORKER
+    GIT -->|"enqueues changed file paths"| PG
+
+    CLAUDE -->|"spawns on startup"| MCP
+    MCP -->|"SQL read + add_knowledge"| PG
+    MCP -->|"embed query text"| FE
+    WORKER -->|"writes code graph + chunks"| PG
+    WORKER -->|"embed chunk text"| FE
+
+    PG -.->|"stored in"| PGDATA
+    CLAUDE -.->|"caches toolchains in"| MISE
+```
+
+**How to read it:**
+
+- **Shared across containers:** the **Postgres database** (worker writes, agent
+  reads) and the **embeddings service** (both turn text into vectors). Services
+  find each other by name over the shared Docker network.
+- **Where the database lives:** in the `pgdata` volume — *not* inside the
+  container — so rebuilding containers never loses memory.
+- **Where the agent works:** in `/workspace`, your real project folder mounted
+  read-write, so its edits land on your disk. The worker gets the *same* folder
+  read-only at `/project`, so ingestion can never modify your code.
+- **How the secret is passed:** the subscription token lives only in `.env`
+  (gitignored) and is injected as an env var into **only** the agent-worker
+  container — the database, worker, and embeddings never see it.
+
+## Diagram 2 — How the images are built (one recipe, many roles)
+
+A key design choice: **one Dockerfile produces one image that runs as three
+services** (just with different start commands). Only the agent image and the
+pulled database image are separate.
+
+```mermaid
+flowchart LR
+    subgraph SRC["📝 Build recipes"]
+        DF1["memory-service/Dockerfile"]
+        DF2["agent-worker/Dockerfile"]
+        PGIMG["pgvector/pgvector:pg16<br/>pulled from registry"]
+    end
+
+    subgraph IMAGES["🧱 Images"]
+        MIMG["memory image<br/>Python + memory package"]
+        AIMG["agent-worker image<br/>Node + Claude Code + Python"]
+    end
+
+    subgraph SERVICES["🚀 Running services"]
+        S_DB["db"]
+        S_EMB["embeddings → runs embeddings_server"]
+        S_MEM["memory → runs mcp_server"]
+        S_WK["worker → runs run_worker"]
+        S_AW["agent-worker → runs claude"]
+    end
+
+    DF1 --> MIMG
+    DF2 --> AIMG
+    PGIMG --> S_DB
+    MIMG -->|"same image,<br/>different command"| S_EMB
+    MIMG --> S_MEM
+    MIMG --> S_WK
+    AIMG --> S_AW
+```
+
+## Diagram 3 — Data flow A: keeping memory fresh (ingestion)
+
+When code changes, memory updates itself. The git hook only *records* what
+changed; the worker does the heavy lifting in the background.
+
+```mermaid
+sequenceDiagram
+    participant Dev as 👤 You
+    participant Git as git post-commit hook
+    participant Q as 📋 Queue table in Postgres
+    participant W as ⚙️ worker
+    participant E as 🧮 embeddings service
+    participant DB as 🧠 Postgres + pgvector
+
+    Dev->>Git: commit a code change
+    Git->>Q: enqueue changed file paths only
+    loop worker drains the queue
+        W->>Q: any pending files?
+        Q-->>W: file paths
+        W->>W: parse with tree-sitter,<br/>build symbol graph + chunks
+        W->>E: embed code and doc chunks
+        E-->>W: vectors
+        W->>DB: store graph + chunks + vectors
+    end
+```
+
+Notes:
+
+- The worker also runs as a one-shot **reconcile** (full scan) to seed a project
+  or recover from drift. Both paths share `memory.discovery`, which skips
+  dependency/build directories (`.venv`, `node_modules`, `.git`, …) and ingests
+  every supported language.
+- Supported today: Python and TypeScript/JavaScript for the code graph;
+  Markdown for docs.
+
+## Diagram 4 — Data flow B: the agent doing work (grounded, not guessing)
+
+Before acting, the agent asks memory what is already known, then writes new
+decisions back for future sessions.
+
+```mermaid
+sequenceDiagram
+    participant Dev as 👤 You
+    participant A as 🤖 Claude Code agent
+    participant Cloud as ☁️ Anthropic via your subscription
+    participant MCP as 🔌 memory MCP server
+    participant E as 🧮 embeddings service
+    participant DB as 🧠 Postgres + pgvector
+    participant FS as 📁 /workspace your project
+
+    Dev->>A: "implement feature X"
+    A->>Cloud: authenticate with subscription token
+    A->>MCP: search_code "where is X handled?"
+    MCP->>E: embed the question
+    E-->>MCP: query vector
+    MCP->>DB: vector + graph search
+    DB-->>MCP: relevant symbols, files, docs
+    MCP-->>A: grounded context
+    A->>FS: read and edit files
+    A->>MCP: add_knowledge "decision + notes"
+    MCP->>DB: persist for future sessions
+    A-->>Dev: done, with explanation
+```
+
+The MCP server exposes: `search_code`, `search_docs`, `get_symbol`,
+`impact_of`, `spec_for`, and `add_knowledge`.
+
+## Glossary for a non-technical reader
+
+- **Container** — a lightweight isolated mini-computer running one job.
+- **Image** — the frozen template a container is started from.
+- **Volume** — storage that lives outside containers, so data survives rebuilds
+  (the **database** and **toolchain cache** live here).
+- **Mount** — sharing a host folder into a container; your project is mounted so
+  the agent edits the *real* files.
+- **MCP server** — the adapter that lets the agent call memory as tools
+  (`search_code`, `add_knowledge`, …).
+- **Embeddings** — turning text into numbers so "find similar code/docs" works by
+  meaning, not keywords.
+
+[GOAL.md]: ../GOAL.md
