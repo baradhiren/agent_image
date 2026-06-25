@@ -18,6 +18,11 @@ RUN apt-get update \
 # uv (installs + runs the memory MCP server).
 RUN pip install --no-cache-dir uv
 
+# mise: polyglot version manager (single static binary, arm64, non-root).
+RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+ && chmod +x /usr/local/bin/mise \
+ && mise --version
+
 # Claude Code CLI (the bundled reference MCP client).
 RUN npm install -g @anthropic-ai/claude-code
 
@@ -29,18 +34,24 @@ COPY memory-service/src            /opt/memory/src
 COPY memory-service/sql            /opt/memory/sql
 RUN cd /opt/memory && uv sync
 
-# Baked role config, skills, and the entrypoint.
+# Baked role config, skills, entrypoint, and the toolset bootstrap script.
 COPY agent-worker/config        /opt/agent-worker/config
 COPY agent-worker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY agent-worker/bootstrap.sh  /usr/local/bin/bootstrap.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/bootstrap.sh
 
-# Non-root user.
-RUN useradd --create-home --shell /bin/bash agent
+# Non-root user + mise data dir (volume-backed at runtime; owned by agent).
+RUN useradd --create-home --shell /bin/bash agent \
+ && mkdir -p /opt/mise/data \
+ && chown -R agent:agent /opt/mise/data
 USER agent
 WORKDIR /workspace
 
 ENV CONFIG_DIR=/opt/agent-worker/config \
-    MEMORY_PYTHON=/opt/memory/.venv/bin/python
+    MEMORY_PYTHON=/opt/memory/.venv/bin/python \
+    MISE_DATA_DIR=/opt/mise/data \
+    MISE_TRUSTED_CONFIG_PATHS=/workspace \
+    PATH=/opt/mise/data/shims:$PATH
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

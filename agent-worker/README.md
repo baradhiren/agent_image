@@ -39,6 +39,21 @@ and in-container memory connectivity against the shared `db`.
 > running stack can still point `CODE_EMBED_*`/`DOC_EMBED_*` at any reachable TEI
 > or hosted embeddings endpoint.
 
+## Toolset bootstrap (Phase 3)
+
+The image bakes `mise` but no language runtimes. At session start the entrypoint
+runs `bootstrap.sh` against `/workspace` (unless `BOOTSTRAP=skip`):
+
+- **Runtimes** — pin them in the project's `.mise.toml` or `.tool-versions`
+  (e.g. `node 20.11.1`). `mise install` + `mise reshim` make them active on `PATH`.
+- **Setup** — optional `specs/toolset.yaml` with an ordered `setup:` list of shell
+  commands (e.g. `pnpm install`, `uv sync`) run after runtimes install.
+
+Toolchains are cached in the `mise-data` named volume across runs. Bootstrap is
+**warn-and-continue**: a failure prints a warning rather than ending the session.
+Re-run any time with the **bootstrap** skill (`bootstrap.sh`) after editing the
+toolset or when a build fails on a missing tool.
+
 ## Memory tools
 
 `search_code`, `search_docs`, `get_symbol`, `impact_of`, `spec_for`, `add_knowledge`

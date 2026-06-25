@@ -1,5 +1,5 @@
 # Root compose: the whole system. Reuses the Phase 1 memory-service stack
-# (db + embeddings + ingest worker) and adds the Phase 2 agent-worker.
+# (db + embeddings + ingest worker) and adds the Phase 2/3 agent-worker.
 include:
   - memory-service/docker-compose.yml
 
@@ -25,7 +25,12 @@ services:
       DOC_EMBED_DIM: "384"
       AGENT_ROLE: ${AGENT_ROLE:-developer}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      BOOTSTRAP: ${BOOTSTRAP:-auto}
     volumes:
       - ${PROJECT_DIR:-./}:/workspace
+      - mise-data:/opt/mise/data
     stdin_open: true
     tty: true
+
+volumes:
+  mise-data:

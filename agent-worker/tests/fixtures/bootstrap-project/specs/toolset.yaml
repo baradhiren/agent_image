@@ -1,0 +1,3 @@
+# Bootstrap smoke fixture: write the active node version to a marker file.
+setup:
+  - node -e "require('fs').writeFileSync('setup-ran.txt', process.version)"
