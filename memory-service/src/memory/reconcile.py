@@ -1,18 +1,10 @@
-from pathlib import Path
-
+from memory.discovery import iter_source_files
 from memory.repository import Repository
 from memory.worker import Worker
 
-_SUPPORTED = (".py", ".md")
-
 
 def scan_paths(root: str) -> list[str]:
-    root_path = Path(root)
-    return sorted(
-        str(p.relative_to(root_path))
-        for p in root_path.rglob("*")
-        if p.is_file() and p.suffix in _SUPPORTED
-    )
+    return iter_source_files(root)
 
 
 def reconcile(repo: Repository, worker: Worker, root: str) -> dict:

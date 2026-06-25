@@ -3,9 +3,8 @@ import sys
 
 from memory.config import Settings
 from memory.db import apply_schema, connect
+from memory.discovery import is_supported
 from memory.repository import Repository
-
-_SUPPORTED = (".py", ".md")
 
 
 def enqueue_changed(root: str, commit_sha: str, rel_paths: list[str]) -> int:
@@ -15,7 +14,7 @@ def enqueue_changed(root: str, commit_sha: str, rel_paths: list[str]) -> int:
     repo = Repository(conn)
     count = 0
     for rel_path in rel_paths:
-        if rel_path.endswith(_SUPPORTED):
+        if is_supported(rel_path):
             repo.enqueue(commit_sha, rel_path)
             count += 1
     return count
@@ -26,7 +25,7 @@ def changed_files(root: str) -> list[str]:
         ["git", "-C", root, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
         capture_output=True, text=True, check=True,
     ).stdout
-    return [line for line in out.splitlines() if line.endswith(_SUPPORTED)]
+    return [line for line in out.splitlines() if is_supported(line)]
 
 
 def head_sha(root: str) -> str:

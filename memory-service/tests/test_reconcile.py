@@ -15,6 +15,15 @@ def test_scan_paths(tmp_path: Path):
     assert scan_paths(str(tmp_path)) == ["a.py", "b.md"]
 
 
+def test_scan_paths_ignores_junk_and_includes_ts(tmp_path: Path):
+    (tmp_path / "app.ts").write_text("const x = 1\n")
+    (tmp_path / "readme.md").write_text("# r\n")
+    venv = tmp_path / ".venv" / "lib"
+    venv.mkdir(parents=True)
+    (venv / "dep.py").write_text("y = 2\n")
+    assert scan_paths(str(tmp_path)) == ["app.ts", "readme.md"]
+
+
 def test_reconcile_removes_orphans_and_prunes(conn, tmp_path: Path):
     (tmp_path / "svc.py").write_text("def helper():\n    return 1\n")
     repo = Repository(conn)

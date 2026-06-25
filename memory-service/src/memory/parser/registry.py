@@ -22,3 +22,7 @@ _REGISTRY: dict[str, tuple[str, LanguageParser]] = {
 
 def code_parser_for(rel_path: str) -> tuple[str, LanguageParser] | None:
     return _REGISTRY.get(PurePosixPath(rel_path).suffix)
+
+
+def code_extensions() -> frozenset[str]:
+    return frozenset(_REGISTRY)
