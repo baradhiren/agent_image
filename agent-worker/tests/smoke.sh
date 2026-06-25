@@ -53,6 +53,17 @@ results = repo.search_code(emb.embed(["hello world"])[0], 5)
 print("search_code ok, rows:", len(results))
 PY
 
+echo "== 6. toolset bootstrap e2e (pinned runtime + setup) =="
+# Copy the fixture into /tmp (Docker Desktop shares /tmp; not /var/folders) so
+# the setup marker lands outside the repo and the bind mount is allowed.
+TMP_PROJ="$(mktemp -d /tmp/agent-bootstrap.XXXXXX)"
+cp -R agent-worker/tests/fixtures/bootstrap-project/. "$TMP_PROJ/"
+boot_out="$(PROJECT_DIR="$TMP_PROJ" docker compose run --rm --no-deps -e BOOTSTRAP=auto agent-worker \
+  bash -c 'node --version && cat setup-ran.txt')"
+echo "$boot_out" | grep -q 'v18.20.4'
+echo "  pinned node active + setup ran ok"
+rm -rf "$TMP_PROJ"
+
 echo "== cleanup =="
 docker compose down
 
