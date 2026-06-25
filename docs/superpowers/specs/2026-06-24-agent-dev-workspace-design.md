@@ -47,7 +47,7 @@ high-leverage gates.
 | Agent runtime | Generic, MCP-based | Works with all open/closed models; MCP is the universal integration point. |
 | Project delivery | Bind-mounted into container | Source of truth stays on host; container is disposable. |
 | Retrieval need | Code-understanding **and** doc/spec RAG, equally | → pgvector as center of gravity, structure-first. |
-| Embeddings | External service, **per-collection pluggable**; default self-hosted TEI | Model-free images; code/docs models chosen independently; code stays on the box by default. |
+| Embeddings | External service, **per-collection pluggable**; default arm64-native fastembed HTTP service (TEI/hosted optional) | Model-free images; code/docs models chosen independently; code stays on the box by default. |
 | Memory sync | **Auto on git commit** (incremental) | Memory tracks committed state cheaply; commits are the unit of durable change. |
 | Orchestration | Workers now, interface stubbed | Ships a testable unit fast; orchestration layers on later without redesign. |
 | Language toolchains | **Not baked in** | Image stays lean; project `specs/` declare the toolset, agent installs at bootstrap (§6.1). |
@@ -155,9 +155,12 @@ batching, and retry boundary as a message broker, with zero added infrastructure
 **Embeddings (external, model-free images):** the embedding **model runs as a separate service**, never
 baked into the DB or worker images. A pluggable `EmbeddingProvider` is selected **per collection** — the
 user can choose a different model for code than for docs (e.g. a code-aware model for code, a general model
-for docs), local or hosted. The default backend is **self-hosted TEI** (Hugging Face Text Embeddings
-Inference) so the secure "code never leaves the box" property holds out of the box; a local in-process
-`fastembed` provider is retained as the offline/test default. Because a pgvector column's dimension is
+for docs), local or hosted. The default backend is a small **arm64-native fastembed HTTP service**
+(`memory.embeddings_server`, a starlette wrapper exposing `POST /embed`) so the secure "code never leaves
+the box" property holds out of the box on Apple Silicon; the in-process `fastembed` provider is retained as
+the offline/test default, and TEI or any hosted endpoint can be substituted via `*_EMBED_URL`. (The original
+plan defaulted to Hugging Face TEI, but `text-embeddings-inference:cpu-1.5` ships no `linux/arm64` image, so
+the fastembed HTTP service is the arm64 default.) Because a pgvector column's dimension is
 fixed, each collection (`code`, `doc`) has its **own configured dimension**, and the `(collection →
 provider, model, dim)` triple is recorded in an `embedding_config` table. On ingest, a mismatch against the
 recorded config is **refused** (not silently mixed): swapping a model requires a reconcile/re-embed. This
@@ -274,7 +277,7 @@ Each axis has a **default** and a **single defined escalation**, so growth is a 
 |---|---|---|---|
 | Retrieval | pgvector | repo > ~10–50M vectors | Qdrant / graph store per project, same MCP interface |
 | Isolation | rootless container | untrusted deps appear | Apple `container` micro-VM per task |
-| Embeddings | self-hosted TEI (model-free images) | want code-aware code retrieval / top quality | swap the per-collection model or point to a hosted API via config (+ re-embed) |
+| Embeddings | fastembed HTTP service (model-free images, arm64-native) | want code-aware code retrieval / top quality | swap the per-collection model, or point to TEI / a hosted API via config (+ re-embed) |
 | Orchestration | stubbed `tasks` interface | need autonomous hand-off | full orchestrator role |
 | Toolset | bootstrap-from-spec | fetch cost too high | project-specific pre-baked image |
 

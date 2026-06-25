@@ -53,7 +53,7 @@ docker compose run agent-worker
 
 ### 5.1 mise in the worker image (`agent-worker/Dockerfile`)
 - Install `mise` as a static binary (arm64), available to the non-root `agent` user.
-- `ENV MISE_DATA_DIR=/opt/mise/data` (created and owned by `agent`); add mise's shim dir to `PATH` so installed runtimes resolve non-interactively (no interactive shell activation needed).
+- `ENV MISE_DATA_DIR=/opt/mise/data` (created and owned by `agent`); add mise's shim dir to `PATH` so installed runtimes resolve in the entrypoint and the agent's (non-login) command execution. **Also add `/etc/profile.d/mise.sh` (`export PATH=/opt/mise/data/shims:$PATH`)** so login shells (`bash -l`, which re-source `/etc/profile` and would otherwise drop the `ENV PATH`) keep the shims too — without this, an interactive session falls back to system Node.
 - mise is independent of: the system Node 20 that runs Claude Code, and the memory server's `/opt/memory/.venv`.
 
 **Trade-off / known interaction:** mise's project `node` shim can shadow the system Node that Claude Code runs under; Claude Code supports Node 18+, so this is low-risk. We keep Claude Code on system Node and accept that, inside a mise-configured project, `node` resolves to the project's pinned version.

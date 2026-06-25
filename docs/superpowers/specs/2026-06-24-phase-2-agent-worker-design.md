@@ -43,7 +43,7 @@ Two planes (parent design): the **persistent plane** is the existing memory serv
 ```
 root docker-compose.yml
 ├── db           (pgvector)        [persistent: pgdata volume]
-├── embeddings   (TEI)
+├── embeddings   (fastembed HTTP service)
 ├── worker       (ingest: drains queue)         ← Phase 1
 └── agent-worker (Claude Code + memory MCP)     ← Phase 2
       AGENT_ROLE=developer|reviewer|design
