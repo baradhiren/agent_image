@@ -21,7 +21,11 @@ RUN pip install --no-cache-dir uv
 # mise: polyglot version manager (single static binary, arm64, non-root).
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
  && chmod +x /usr/local/bin/mise \
- && mise --version
+ && mise --version \
+ # Keep mise shims on PATH in login shells too (interactive `bash -l` re-sources
+ # /etc/profile and would otherwise drop the ENV PATH, shadowing pinned runtimes
+ # with system Node).
+ && printf 'export PATH=/opt/mise/data/shims:$PATH\n' > /etc/profile.d/mise.sh
 
 # Claude Code CLI (the bundled reference MCP client).
 RUN npm install -g @anthropic-ai/claude-code
