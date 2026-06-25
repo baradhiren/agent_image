@@ -2,7 +2,9 @@
 
 Persistent knowledge layer: structure graph (resolved edges) + semantic embeddings
 + spec linkage, kept fresh by enqueue → worker → reconcile, exposed over MCP.
-The embedding model runs as a **separate service** (default TEI); our images are model-free.
+The embedding model runs as a **separate service** (default: an arm64-native
+fastembed HTTP service, `memory.embeddings_server`; swap in TEI or a hosted
+endpoint via `*_EMBED_URL`); our images are model-free.
 
 ## Run
 
@@ -10,7 +12,7 @@ The embedding model runs as a **separate service** (default TEI); our images are
 docker compose up -d db          # Postgres + pgvector
 uv sync --extra dev
 uv run pytest -v                 # full suite (db running; uses local fastembed, no TEI needed)
-docker compose up -d embeddings memory worker   # running stack (remote TEI provider)
+docker compose up -d embeddings memory worker   # running stack (remote fastembed service)
 ```
 
 ## Choosing embedding models

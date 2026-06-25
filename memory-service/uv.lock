@@ -517,10 +517,12 @@ dependencies = [
     { name = "mcp" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "starlette" },
     { name = "tree-sitter" },
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
     { name = "tree-sitter-typescript" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -539,11 +541,13 @@ requires-dist = [
     { name = "pgvector", specifier = ">=0.3.6" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
+    { name = "starlette", specifier = ">=0.37" },
     { name = "tree-sitter", specifier = ">=0.23" },
     { name = "tree-sitter-javascript", specifier = ">=0.25" },
     { name = "tree-sitter-python", specifier = ">=0.23" },
     { name = "tree-sitter-typescript", specifier = ">=0.23" },
     { name = "trio", marker = "extra == 'dev'", specifier = ">=0.26" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 provides-extras = ["dev"]
 

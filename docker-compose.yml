@@ -12,7 +12,7 @@ services:
       db:
         condition: service_healthy
       embeddings:
-        condition: service_started
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
       CODE_EMBED_PROVIDER: remote

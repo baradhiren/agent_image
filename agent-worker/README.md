@@ -33,11 +33,11 @@ overlay), copies the role's skills into `~/.claude/skills/`, and registers the
 Builds the image and verifies role compose, `claude --version`, MCP registration,
 and in-container memory connectivity against the shared `db`.
 
-> **Note (Apple Silicon):** the connectivity check uses the in-process `local`
-> fastembed provider rather than the TEI `embeddings` service, because the Phase 1
-> `text-embeddings-inference:cpu-1.5` image has no `linux/arm64` manifest. The
-> running stack can still point `CODE_EMBED_*`/`DOC_EMBED_*` at any reachable TEI
-> or hosted embeddings endpoint.
+> **Note (Apple Silicon):** the default `embeddings` service is now an
+> arm64-native fastembed HTTP service (`memory.embeddings_server`), because the
+> original `text-embeddings-inference:cpu-1.5` image has no `linux/arm64`
+> manifest. The running stack works on Apple Silicon out of the box; point
+> `CODE_EMBED_*`/`DOC_EMBED_*` at TEI or any hosted endpoint if you prefer.
 
 ## Toolset bootstrap (Phase 3)
 

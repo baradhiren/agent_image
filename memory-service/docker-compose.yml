@@ -16,15 +16,27 @@ services:
       retries: 20
 
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
-    command: ["--model-id", "BAAI/bge-small-en-v1.5"]
+    # fastembed HTTP service (arm64-native). Replaces TEI, which has no
+    # linux/arm64 image. Same surface RemoteEmbeddingProvider calls: POST /embed.
+    build: .
+    command: ["uv", "run", "python", "-m", "memory.embeddings_server"]
+    environment:
+      PORT: "80"
+      EMBED_MODEL: BAAI/bge-small-en-v1.5
     ports:
       - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:80/health')\""]
+      interval: 3s
+      timeout: 5s
+      retries: 40
 
   memory:
     build: .
     depends_on:
       db:
+        condition: service_healthy
+      embeddings:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
@@ -43,6 +55,8 @@ services:
     build: .
     depends_on:
       db:
+        condition: service_healthy
+      embeddings:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
