@@ -24,7 +24,10 @@ services:
       DOC_EMBED_MODEL: BAAI/bge-small-en-v1.5
       DOC_EMBED_DIM: "384"
       AGENT_ROLE: ${AGENT_ROLE:-developer}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Claude Code auth via your Pro/Max subscription (run `claude setup-token`
+      # on the host, put the sk-ant-oat... value in .env). Leave ANTHROPIC_API_KEY
+      # unset — if present it takes precedence and reverts to metered API billing.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       BOOTSTRAP: ${BOOTSTRAP:-auto}
     volumes:
       - ${PROJECT_DIR:-./}:/workspace
