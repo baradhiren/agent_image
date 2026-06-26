@@ -911,9 +911,12 @@ def test_restore_path_preserves_knowledge(tmp_path):
     home = proj / ".agent-memory"
     home.mkdir()
 
-    # build a DB with agent knowledge, then snapshot it into the project home
+    # build a DB with agent knowledge, then snapshot it into the project home.
+    # The qualname must match a symbol the parser actually emits for pkg/mod.py:
+    # the Python parser names top-level functions by bare name ("hello"), so the
+    # catch-up reconcile's prune_spec_links keeps this link (not dangling).
     conn = connect(settings); reset_db(conn); apply_schema(conn)
-    conn.execute("INSERT INTO spec_links (spec_path, symbol_qualname) VALUES ('s.md','pkg.mod.hello')")
+    conn.execute("INSERT INTO spec_links (spec_path, symbol_qualname) VALUES ('s.md','hello')")
     conn.close()
     snapshot.dump(str(home), settings)
 
