@@ -992,7 +992,7 @@ git commit -m "feat(startup): orchestrate reset, restore-or-seed, and catch-up r
 
 ---
 
-### Task 8: Dockerfile (pg client 16) + compose wiring (init service, volume, mounts)
+### Task 8: Dockerfile (pg client 18) + compose wiring (db image pin, init service, volume, mounts)
 
 Make `pg_dump`/`pg_restore` available in the image and add the one-shot `init` service plus the unwritable-fallback volume.
 
