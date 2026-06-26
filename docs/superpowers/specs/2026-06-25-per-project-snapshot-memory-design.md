@@ -23,18 +23,20 @@ The memory DB has two kinds of data:
 
 - **Derivable** — the structure graph + chunks + embeddings. 100% reproducible
   from source via `reconcile` (~80s for a small project). Disposable.
-- **Irreplaceable** — agent-authored knowledge (`add_knowledge`), spec links,
-  and `embedding_config`. Cannot be rebuilt from source.
+- **Irreplaceable** — agent-authored **spec links** and `embedding_config`.
+  Cannot be rebuilt from source. Note: the `add_knowledge` MCP tool writes into
+  the **`spec_links`** table; there is no separate `knowledge` table. "Agent
+  knowledge" in this spec means `spec_links` rows.
 
 The on-disk snapshot is therefore a **cache + a knowledge store**. If it is
 missing, stale, or incompatible, we rebuild the derivable part with `reconcile`;
-the irreplaceable part is what we must protect at all costs.
+the irreplaceable part (`spec_links`) is what we must protect at all costs.
 
 ## Decisions (resolved during brainstorming)
 
 | # | Decision | Choice |
 |---|----------|--------|
-| 1 | Snapshot scope | **Full DB** (graph + embeddings + knowledge), then an incremental catch-up `reconcile` on resume. Fast resume, no re-embedding unless files changed. |
+| 1 | Snapshot scope | **Full DB** (graph + embeddings + `spec_links`), then an incremental catch-up `reconcile` on resume. Fast resume, no re-embedding unless files changed. |
 | 2 | Lifecycle trigger | **Auto-restore on startup; explicit save.** `dump` is a command the lifecycle helper / orchestrator calls before teardown. No fragile shutdown traps. |
 | 3 | Location & ignore | **Self-ignoring `.agent-memory/`** in `PROJECT_DIR`, containing a `.gitignore` with `*`. Never touches the repo's root `.gitignore`. |
 | 4 | Unwritable target | **Fail fast + fallback**, never silent loss. Probe writability at startup; on failure persist to a named volume and warn loudly. |
@@ -72,8 +74,16 @@ Written at `dump` time, validated at `restore` time:
 ```
 
 On restore we refuse the snapshot (and fall back to a fresh seed) if the
-embedding model/dim differs or the Postgres major version differs. This
+embedding **model/dim** differs or the Postgres major version differs. This
 prevents a silent `embedding_config` mismatch (mixed-dimension vectors).
+
+A **provider-only** change (e.g. `local` ↔ `remote`, same model + dim) is *not*
+a mismatch — it produces the same vector space — so it is **not** part of the
+compatibility check. Because `Repository.ensure_embedding_config` currently
+treats any change (including provider) as fatal, the catch-up reconcile after a
+restore would otherwise crash on a provider-only difference. The implementation
+must make `ensure_embedding_config` tolerant of a provider-only change (update
+the stored provider; keep model/dim changes fatal).
 
 ### New module: `memory/snapshot.py`
 
@@ -138,9 +148,16 @@ caller (lifecycle helper / orchestrator)
 
 ## Compose / mount changes
 
-- The init/snapshot container needs `${PROJECT_DIR}/.agent-memory` mounted
-  **read-write** (the steady-state ingest worker keeps its read-only `/project`
-  mount for safety).
+- The init runs as a **one-shot `init` service** (same memory image). Because it
+  resets the DB on startup, **every DB consumer must wait for it to complete** —
+  the ingest `worker`, the standalone `memory` MCP service, **and** the root
+  `agent-worker` all gain `depends_on: { init: { condition:
+  service_completed_successfully } }`. Otherwise an agent can query the DB mid-
+  reset/restore.
+- The init/snapshot container mounts `${PROJECT_DIR}` **read-write** so startup
+  can create `${PROJECT_DIR}/.agent-memory` next to the source (the subdir does
+  not exist yet, so a narrower mount is impractical). The steady-state ingest
+  worker keeps its read-only `/project` mount for safety.
 - Add a named volume `agent-memory` as the unwritable-fallback snapshot home.
 - The live Postgres volume becomes a disposable working store (reset on every
   start); it may remain a named volume for speed.
@@ -160,8 +177,8 @@ lost. The stack degrades to working-but-loud, never working-but-lossy.
 
 ## Testing
 
-- `dump` → `restore` round-trip preserves row counts **including
-  `add_knowledge`** and `spec_links`.
+- `dump` → `restore` round-trip preserves row counts **including the
+  `spec_links`** rows written by `add_knowledge`.
 - `meta_is_compatible`: matching vs differing model/dim/pg-major (pure unit).
 - Unwritable `.agent-memory` → falls back to the named volume and warns; data
   still persisted (never the old "in-memory only" path).
