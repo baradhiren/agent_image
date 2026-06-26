@@ -1049,13 +1049,17 @@ cd memory-service && docker compose down -v
 Insert into `memory-service/Dockerfile` immediately after `RUN pip install --no-cache-dir uv`:
 
 ```dockerfile
-# pg_dump / pg_restore (major 18, matching the pgvector:0.8.2-pg18 server) for snapshots
+# pg_dump / pg_restore (major 18, matching the pgvector:0.8.2-pg18 server) for snapshots.
+# Derive the Debian codename from the base image at build time (python:3.12-slim is
+# currently Debian 13 "trixie"); a hardcoded suite breaks when the base bumps and the
+# old suite's libpq deps no longer resolve. The client major (18) stays pinned.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
  && install -d /usr/share/postgresql-common/pgdg \
  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
- && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+ && . /etc/os-release \
+ && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends postgresql-client-18 \
