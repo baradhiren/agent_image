@@ -6,14 +6,15 @@
 
 **Architecture:** A new `memory/snapshot.py` wraps `pg_dump -Fc` / `pg_restore` against `DATABASE_URL` and guards restores with a `meta.json` compatibility check. A new `memory/startup.py` one-shot resets the live DB (for isolation), probes `.agent-memory/` writability (fall back to a named volume), restores a compatible snapshot or seeds fresh, then always runs an incremental `reconcile` to catch up. Compose gains a one-shot `init` service that runs startup before the steady worker drains.
 
-**Tech Stack:** Python 3.12, psycopg 3, PostgreSQL 16 + pgvector, `pg_dump`/`pg_restore` (PostgreSQL client 16), Docker Compose, pytest.
+**Tech Stack:** Python 3.12, psycopg 3, PostgreSQL 18 + pgvector 0.8.2, `pg_dump`/`pg_restore` (PostgreSQL client 18), Docker Compose, pytest.
 
 ## Global Constraints
 
 - **Source spec:** [docs/superpowers/specs/2026-06-25-per-project-snapshot-memory-design.md](../specs/2026-06-25-per-project-snapshot-memory-design.md). This plan implements the **Q1** spec only; the orchestration appendix (Q2–Q4) is explicitly out of scope.
 - **All code lives under** `memory-service/` (package root `memory-service/src/memory/`, tests `memory-service/tests/`, SQL `memory-service/sql/`).
+- **Single pinned database image (verbatim):** `pgvector/pgvector:0.8.2-pg18` — PostgreSQL **18** + pgvector **0.8.2**. One Postgres major is used everywhere (server image, image-baked client, local dev); no multi-version handling. Bumping the major recreates the `pgdata` volume (memory is reconcilable, so this is safe) — `docker compose down -v` once when switching off the old `pg16` volume.
 - **"Agent-authored knowledge" in this codebase = the `spec_links` table** (written by the MCP `add_knowledge` tool). Round-trip tests MUST assert `spec_links` rows survive. There is no separate `knowledge` table.
-- **Snapshot format:** `pg_dump --format=custom` (compressed custom). Restores require a `pg_restore` whose major version matches the server (**16**).
+- **Snapshot format:** `pg_dump --format=custom` (compressed custom). Restores require a `pg_restore` whose major version matches the server (**18**).
 - **Compatibility guard fields (verbatim):** `schema_version` (int, current = `1`), `pg_major` (int), `code_embed.{model,dim}`, `doc_embed.{model,dim}`. A restore is refused if any differ from the running `Settings` / server.
 - **Provider is NOT a compatibility field.** A provider-only change (e.g. `local` ↔ `remote`, same model + dim) yields the same vector space, so it must not block a restore. Because the restored `embedding_config` row carries the dump-time provider, the catch-up reconcile would otherwise crash on `ensure_embedding_config`. `ensure_embedding_config` must therefore **update** the stored provider on a provider-only change and keep only model/dim changes fatal (**Task 4b**).
 - **Self-ignoring dir:** `.agent-memory/` MUST contain a `.gitignore` whose only content is `*` so the whole directory ignores itself. Never touch the repo's root `.gitignore`.
@@ -23,8 +24,8 @@
 
 ### Test prerequisites (read before running any DB test)
 
-- A pg16 server must be running: from `memory-service/`, `docker compose up -d db` (exposes `localhost:5432`; matches the default `DATABASE_URL`).
-- `pg_dump` / `pg_restore` **major 16** MUST be on `PATH` for the dump/restore tasks. The host default may be older (e.g. Homebrew 14), which cannot dump a pg16 server. Fix locally with `brew install postgresql@16` and prepend its `bin` to `PATH`, **or** run the suite inside the memory container (which installs `postgresql-client-16` after Task 8). The Task 1 and Task 2 tests do not need `pg_dump`.
+- A pg18 server must be running: from `memory-service/`, `docker compose up -d db` (exposes `localhost:5432`; matches the default `DATABASE_URL`). The db image is `pgvector/pgvector:0.8.2-pg18`. If an old `pg16` `pgdata` volume exists, run `docker compose down -v` once first so pg18 starts on a fresh data dir.
+- `pg_dump` / `pg_restore` **major 18** MUST be on `PATH` for the dump/restore tasks. The host default may be older (e.g. Homebrew 14), which cannot dump a pg18 server. The pinned setup installs `postgresql@18` on the host and prepends its `bin` to `PATH` (`/opt/homebrew/opt/postgresql@18/bin`). The Task 1 and Task 2 tests do not need `pg_dump`.
 - Run tests from `memory-service/`: `uv run pytest ...`.
 
 ---
@@ -64,10 +65,10 @@ def _settings(code_model="BAAI/bge-small-en-v1.5", code_dim=384,
 
 
 def test_build_meta_has_required_fields():
-    meta = snapshot.build_meta(_settings(), pg_major=16,
+    meta = snapshot.build_meta(_settings(), pg_major=18,
                                source_head="abc123", location="co-located")
     assert meta["schema_version"] == snapshot.SCHEMA_VERSION
-    assert meta["pg_major"] == 16
+    assert meta["pg_major"] == 18
     assert meta["code_embed"] == {"model": "BAAI/bge-small-en-v1.5", "dim": 384}
     assert meta["doc_embed"] == {"model": "BAAI/bge-small-en-v1.5", "dim": 384}
     assert meta["source_head"] == "abc123"
@@ -78,36 +79,36 @@ def test_build_meta_has_required_fields():
 
 def test_compatible_when_everything_matches():
     s = _settings()
-    meta = snapshot.build_meta(s, 16, None, "co-located")
-    assert snapshot.meta_is_compatible(meta, s, pg_major=16) is True
+    meta = snapshot.build_meta(s, 18, None, "co-located")
+    assert snapshot.meta_is_compatible(meta, s, pg_major=18) is True
 
 
 def test_incompatible_on_dim_mismatch():
-    meta = snapshot.build_meta(_settings(code_dim=384), 16, None, "co-located")
-    assert snapshot.meta_is_compatible(meta, _settings(code_dim=768), 16) is False
+    meta = snapshot.build_meta(_settings(code_dim=384), 18, None, "co-located")
+    assert snapshot.meta_is_compatible(meta, _settings(code_dim=768), 18) is False
 
 
 def test_incompatible_on_model_mismatch():
-    meta = snapshot.build_meta(_settings(doc_model="m-a"), 16, None, "co-located")
-    assert snapshot.meta_is_compatible(meta, _settings(doc_model="m-b"), 16) is False
+    meta = snapshot.build_meta(_settings(doc_model="m-a"), 18, None, "co-located")
+    assert snapshot.meta_is_compatible(meta, _settings(doc_model="m-b"), 18) is False
 
 
 def test_incompatible_on_pg_major_mismatch():
     s = _settings()
-    meta = snapshot.build_meta(s, 16, None, "co-located")
-    assert snapshot.meta_is_compatible(meta, s, pg_major=15) is False
+    meta = snapshot.build_meta(s, 18, None, "co-located")
+    assert snapshot.meta_is_compatible(meta, s, pg_major=17) is False
 
 
 def test_incompatible_on_schema_version_mismatch():
     s = _settings()
-    meta = snapshot.build_meta(s, 16, None, "co-located")
+    meta = snapshot.build_meta(s, 18, None, "co-located")
     meta["schema_version"] = 999
-    assert snapshot.meta_is_compatible(meta, s, 16) is False
+    assert snapshot.meta_is_compatible(meta, s, 18) is False
 
 
 def test_incompatible_on_garbage_meta():
-    assert snapshot.meta_is_compatible({}, _settings(), 16) is False
-    assert snapshot.meta_is_compatible({"code_embed": None}, _settings(), 16) is False
+    assert snapshot.meta_is_compatible({}, _settings(), 18) is False
+    assert snapshot.meta_is_compatible({"code_embed": None}, _settings(), 18) is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -253,7 +254,7 @@ Atomic `pg_dump -Fc` plus the compatibility metadata and the self-ignoring `.git
 - Modify: `memory-service/src/memory/snapshot.py` (add `server_pg_major`, `_ensure_gitignore`, `dump`)
 - Test: `memory-service/tests/test_snapshot_dump.py`
 
-> **Requires `pg_dump` major 16 on PATH** (see Test prerequisites).
+> **Requires `pg_dump` major 18 on PATH** (see Test prerequisites).
 
 **Interfaces:**
 - Consumes: `memory.db.connect`, `build_meta` (Task 1).
@@ -294,7 +295,7 @@ def test_dump_writes_all_three_files(tmp_path):
     assert (tmp_path / ".gitignore").read_text().strip() == "*"
 
     meta = json.loads((tmp_path / "meta.json").read_text())
-    assert meta["pg_major"] == 16
+    assert meta["pg_major"] == 18
     assert meta["code_embed"]["dim"] == 384
     assert meta["source_head"] == "deadbeef"
 
@@ -409,7 +410,7 @@ Validate `meta.json`, reset the DB, and `pg_restore`; return `False` (caller see
 - Modify: `memory-service/src/memory/snapshot.py` (add `restore`)
 - Test: `memory-service/tests/test_snapshot_restore.py`
 
-> **Requires `pg_restore` major 16 on PATH.**
+> **Requires `pg_restore` major 18 on PATH.**
 
 **Interfaces:**
 - Consumes: `memory.db.connect`, `memory.db.reset_db` (Task 2), `meta_is_compatible`, `server_pg_major`, `dump` (Task 3).
@@ -993,22 +994,44 @@ git commit -m "feat(startup): orchestrate reset, restore-or-seed, and catch-up r
 Make `pg_dump`/`pg_restore` available in the image and add the one-shot `init` service plus the unwritable-fallback volume.
 
 **Files:**
-- Modify: `memory-service/Dockerfile` (install `postgresql-client-16`)
-- Modify: `memory-service/docker-compose.yml` (add `init` service, `agent-memory` volume, gate `worker` **and** `memory` on init)
+- Modify: `memory-service/Dockerfile` (install `postgresql-client-18`)
+- Modify: `memory-service/docker-compose.yml` (pin db image to `pgvector/pgvector:0.8.2-pg18`, add `init` service, `agent-memory` volume, gate `worker` **and** `memory` on init)
 - Modify: `docker-compose.yml` (root) — gate `agent-worker` on init completing
 
 > **Existing-code change.** Both the image build (architecture.md Diagram 2) and runtime topology (Diagram 1, the volumes and service set) change. Documented in Task 9.
 
 **Interfaces:**
 - Consumes: `memory.startup` (Task 7) as the `init` service command.
-- Produces: a memory image with `pg_dump`/`pg_restore` 16; an `init` one-shot that runs `python -m memory.startup /project`; a named volume `agent-memory`; `worker` now depends on `init` completing.
+- Produces: a memory image with `pg_dump`/`pg_restore` 18; a db pinned to `pgvector/pgvector:0.8.2-pg18`; an `init` one-shot that runs `python -m memory.startup /project`; a named volume `agent-memory`; `worker` now depends on `init` completing.
 
-- [ ] **Step 1: Add the PostgreSQL 16 client to the Dockerfile**
+- [ ] **Step 1: Pin the db image to PostgreSQL 18 + pgvector 0.8.2**
+
+In `memory-service/docker-compose.yml`, change the `db` service image from:
+
+```yaml
+  db:
+    image: pgvector/pgvector:pg16
+```
+
+to:
+
+```yaml
+  db:
+    image: pgvector/pgvector:0.8.2-pg18
+```
+
+Then recreate the data volume once so pg18 starts on a fresh data dir (the old volume holds pg16 files pg18 refuses to open):
+
+```bash
+cd memory-service && docker compose down -v
+```
+
+- [ ] **Step 2: Add the PostgreSQL 18 client to the Dockerfile**
 
 Insert into `memory-service/Dockerfile` immediately after `RUN pip install --no-cache-dir uv`:
 
 ```dockerfile
-# pg_dump / pg_restore (major 16, matching the pgvector:pg16 server) for snapshots
+# pg_dump / pg_restore (major 18, matching the pgvector:0.8.2-pg18 server) for snapshots
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
  && install -d /usr/share/postgresql-common/pgdg \
@@ -1017,11 +1040,11 @@ RUN apt-get update \
  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client-16 \
+ && apt-get install -y --no-install-recommends postgresql-client-18 \
  && rm -rf /var/lib/apt/lists/*
 ```
 
-- [ ] **Step 2: Add the `init` service and `agent-memory` volume to compose**
+- [ ] **Step 3: Add the `init` service and `agent-memory` volume to compose**
 
 In `memory-service/docker-compose.yml`, add this service (mirror the `worker` env block exactly) before the `worker` service:
 
@@ -1050,7 +1073,7 @@ In `memory-service/docker-compose.yml`, add this service (mirror the `worker` en
     command: ["uv", "run", "python", "-m", "memory.startup", "/project"]
 ```
 
-- [ ] **Step 3: Gate every DB consumer on init completing**
+- [ ] **Step 4: Gate every DB consumer on init completing**
 
 `init` resets the DB (`DROP SCHEMA public`) on startup, so **every** service that reads/writes the DB must wait for it to finish — otherwise an agent can query the DB mid-reset/restore. Add `init: { condition: service_completed_successfully }` to the `depends_on` of:
 
@@ -1082,7 +1105,7 @@ In `memory-service/docker-compose.yml`, add this service (mirror the `worker` en
         condition: service_completed_successfully
 ```
 
-- [ ] **Step 4: Add the `agent-memory` named volume**
+- [ ] **Step 5: Add the `agent-memory` named volume**
 
 Change the `volumes:` block at the bottom of `memory-service/docker-compose.yml` from:
 
@@ -1099,16 +1122,16 @@ volumes:
   agent-memory:
 ```
 
-- [ ] **Step 5: Verify the image builds and the init service runs end-to-end**
+- [ ] **Step 6: Verify the image builds and the init service runs end-to-end**
 
 Run: `cd memory-service && docker compose build init && PROJECT_DIR=$(pwd) docker compose run --rm init`
 Expected: build succeeds; the run prints a dict like `{'location': 'co-located', 'restored': False, 'reconcile': {...}}`, and a `.agent-memory/` (with `.gitignore` containing `*`) appears under `memory-service/`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add memory-service/Dockerfile memory-service/docker-compose.yml docker-compose.yml
-git commit -m "feat(compose): add init startup service, pg16 client, fallback volume; gate consumers on init"
+git commit -m "feat(compose): pin pg18+pgvector0.8.2, add init startup service, pg18 client, fallback volume; gate consumers on init"
 ```
 
 ---
