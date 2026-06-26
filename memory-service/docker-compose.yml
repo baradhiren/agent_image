@@ -1,6 +1,6 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.2-pg18
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -8,7 +8,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # pg18+ stores data in a major-version subdir; mount the parent, not /data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s
@@ -31,6 +32,29 @@ services:
       timeout: 5s
       retries: 40
 
+  init:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
+      CODE_EMBED_PROVIDER: remote
+      CODE_EMBED_URL: http://embeddings:80
+      CODE_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      CODE_EMBED_DIM: "384"
+      DOC_EMBED_PROVIDER: remote
+      DOC_EMBED_URL: http://embeddings:80
+      DOC_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      DOC_EMBED_DIM: "384"
+    volumes:
+      # read-write so startup can create PROJECT_DIR/.agent-memory next to the source
+      - ${PROJECT_DIR:-./}:/project
+      - agent-memory:/agent-memory   # unwritable-fallback snapshot home
+    command: ["uv", "run", "python", "-m", "memory.startup", "/project"]
+
   memory:
     build: .
     depends_on:
@@ -38,6 +62,8 @@ services:
         condition: service_healthy
       embeddings:
         condition: service_healthy
+      init:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
       CODE_EMBED_PROVIDER: remote
@@ -58,6 +84,8 @@ services:
         condition: service_healthy
       embeddings:
         condition: service_healthy
+      init:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
       CODE_EMBED_PROVIDER: remote
@@ -74,3 +102,4 @@ services:
 
 volumes:
   pgdata:
+  agent-memory:
