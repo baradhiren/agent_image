@@ -49,9 +49,10 @@ def test_restore_refuses_incompatible_meta(tmp_path):
     assert snapshot.restore(str(tmp_path), settings) is False
 
 
-def test_restore_returns_false_on_corrupt_dump(tmp_path):
+def test_restore_returns_false_on_corrupt_dump(tmp_path, capsys):
     settings = _seed_and_dump(tmp_path)
     (tmp_path / "snapshot.dump").write_bytes(b"not a real pg_dump archive")
 
     conn = connect(settings); reset_db(conn); conn.close()
     assert snapshot.restore(str(tmp_path), settings) is False
+    assert "pg_restore failed" in capsys.readouterr().err

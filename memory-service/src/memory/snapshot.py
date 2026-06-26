@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,7 +127,10 @@ def restore(source_dir: str, settings: Settings) -> bool:
              str(dump_path)],
             check=True,
         )
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        print(f"WARNING: pg_restore failed (exit {e.returncode}); the snapshot could "
+              f"not be restored. Falling back to a fresh seed — agent-authored spec_links "
+              f"in the snapshot are lost.", file=sys.stderr)
         return False
     return True
 
@@ -143,8 +147,6 @@ def _git_head(repo_dir: str) -> str | None:
 
 
 def main() -> None:
-    import sys
-
     if len(sys.argv) < 3 or sys.argv[1] not in ("dump", "restore"):
         print("usage: python -m memory.snapshot dump|restore <dir>", file=sys.stderr)
         raise SystemExit(2)
