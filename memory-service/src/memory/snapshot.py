@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memory.config import Settings
-from memory.db import connect
+from memory.db import connect, reset_db
 
 SCHEMA_VERSION = 1
 
@@ -88,10 +88,44 @@ def dump(target_dir: str, settings: Settings, source_head: str | None = None,
     meta = build_meta(settings, pg_major, source_head, location)
     meta_tmp = str(target / "meta.json.tmp")
     try:
-        with open(meta_tmp, "w") as f:
+        with open(meta_tmp, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
         os.replace(meta_tmp, str(target / "meta.json"))
     except BaseException:
         if os.path.exists(meta_tmp):
             os.remove(meta_tmp)
         raise
+
+
+def restore(source_dir: str, settings: Settings) -> bool:
+    """Restore a compatible snapshot into a clean DB. Returns True on success;
+    False (caller then seeds) if the snapshot is missing, incompatible, or
+    pg_restore fails. Never raises on the seed-fallback paths — derivable data
+    is safe to rebuild."""
+    source = Path(source_dir)
+    dump_path = source / "snapshot.dump"
+    meta_path = source / "meta.json"
+    if not dump_path.exists() or not meta_path.exists():
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    conn = connect(settings)
+    try:
+        if not meta_is_compatible(meta, settings, server_pg_major(conn)):
+            return False
+        reset_db(conn)  # clean slate before restore
+    finally:
+        conn.close()
+
+    try:
+        subprocess.run(
+            ["pg_restore", "--no-owner", "--dbname", settings.database_url,
+             str(dump_path)],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return False
+    return True
