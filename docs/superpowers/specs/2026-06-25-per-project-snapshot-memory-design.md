@@ -1,7 +1,7 @@
 # Per-Project Snapshot-able Memory — Design
 
 - **Date:** 2026-06-25
-- **Status:** Approved (ready for implementation plan)
+- **Status:** Implemented — see [plan](../plans/2026-06-26-per-project-snapshot-memory.md)
 - **Phase:** Q1 — prerequisite for the orchestration layer (Q2–Q4, see appendix)
 
 ## Problem
