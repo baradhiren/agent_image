@@ -129,3 +129,36 @@ def restore(source_dir: str, settings: Settings) -> bool:
     except subprocess.CalledProcessError:
         return False
     return True
+
+
+def _git_head(repo_dir: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo_dir, "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def main() -> None:
+    import sys
+
+    if len(sys.argv) < 3 or sys.argv[1] not in ("dump", "restore"):
+        print("usage: python -m memory.snapshot dump|restore <dir>", file=sys.stderr)
+        raise SystemExit(2)
+
+    action, target = sys.argv[1], sys.argv[2]
+    settings = Settings.from_env()
+
+    if action == "dump":
+        dump(target, settings, source_head=_git_head(os.path.dirname(os.path.abspath(target))))
+        print(f"dumped snapshot to {target}")
+    else:
+        ok = restore(target, settings)
+        print("restored from snapshot" if ok else "no compatible snapshot; caller should seed")
+
+
+if __name__ == "__main__":
+    main()
