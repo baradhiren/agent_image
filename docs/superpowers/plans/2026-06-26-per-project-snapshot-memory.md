@@ -1020,7 +1020,22 @@ to:
     image: pgvector/pgvector:0.8.2-pg18
 ```
 
-Then recreate the data volume once so pg18 starts on a fresh data dir (the old volume holds pg16 files pg18 refuses to open):
+Also change the db volume mount — pg18+ images store data in a major-version subdirectory and refuse to start with the old `/var/lib/postgresql/data` mount. In the `db` service's `volumes:`, change:
+
+```yaml
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+```
+
+to:
+
+```yaml
+    volumes:
+      # pg18+ stores data in a major-version subdir; mount the parent, not /data
+      - pgdata:/var/lib/postgresql
+```
+
+Then recreate the data volume once so pg18 starts on a fresh data dir (the old volume holds pg16 files at the old path that pg18 refuses to open):
 
 ```bash
 cd memory-service && docker compose down -v
