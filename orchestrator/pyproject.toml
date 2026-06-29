@@ -1,0 +1,28 @@
+[project]
+name = "orchestrator"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "memory-service",
+    "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3"]
+
+[project.scripts]
+agentctl = "orchestrator.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orchestrator"]
+
+[tool.uv.sources]
+memory-service = { path = "../memory-service", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
