@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS embedding_config (
     dim        INT  NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS tasks (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    spec_ref      TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    assignee_role TEXT NOT NULL,
+    branch        TEXT,
+    status        TEXT NOT NULL DEFAULT 'in_progress',
+    round         INT  NOT NULL DEFAULT 0,
+    review_status TEXT NOT NULL DEFAULT 'pending',
+    review_notes  TEXT,
+    summary       TEXT,
+    artifacts     JSONB NOT NULL DEFAULT '[]',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS code_chunks_embedding_idx ON code_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS doc_chunks_embedding_idx ON doc_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS symbols_name_idx ON symbols (name);

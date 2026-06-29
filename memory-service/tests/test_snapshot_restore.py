@@ -56,3 +56,22 @@ def test_restore_returns_false_on_corrupt_dump(tmp_path, capsys):
     conn = connect(settings); reset_db(conn); conn.close()
     assert snapshot.restore(str(tmp_path), settings) is False
     assert "pg_restore failed" in capsys.readouterr().err
+
+
+def test_roundtrip_preserves_tasks(tmp_path):
+    from memory.tasks import TaskRepository
+    settings = Settings.from_env()
+    conn = connect(settings)
+    reset_db(conn)
+    apply_schema(conn)
+    tid = TaskRepository(conn).create("tasks/x.md", "Add export", "developer")
+    conn.close()
+
+    snapshot.dump(str(tmp_path), settings)
+    conn = connect(settings); reset_db(conn); conn.close()
+    assert snapshot.restore(str(tmp_path), settings) is True
+
+    conn = connect(settings)
+    row = TaskRepository(conn).get(tid)
+    conn.close()
+    assert row is not None and row["title"] == "Add export"
