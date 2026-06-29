@@ -864,7 +864,7 @@ Wrap `run_task` with the compose lifecycle and the spec's error handling: always
 **Interfaces:**
 - Consumes: `compose_up`/`compose_down`/`snapshot_dump` (Task 4), `run_task` (Task 5).
 - Produces:
-  - `orchestrate(*, project_dir: str, compose_dir: str, run_task_fn: Callable[[], TaskReport], up, down, dump) -> TaskReport`
+  - `orchestrate(*, run_task_fn: Callable[[], TaskReport], up, down, dump) -> TaskReport`
     - `up`/`down`/`dump` are `Callable[[], None]` (already bound to `compose_dir`/`project_dir` by the caller).
     - On `dump` raising `subprocess.CalledProcessError`: prints a loud stderr warning and does NOT call `down`; re-raises.
 
@@ -886,8 +886,7 @@ def _report():
 
 def test_dump_before_down_on_success():
     order = []
-    orchestrate(project_dir="/p", compose_dir="/i",
-                run_task_fn=lambda: _report(),
+    orchestrate(run_task_fn=lambda: _report(),
                 up=lambda: order.append("up"),
                 down=lambda: order.append("down"),
                 dump=lambda: order.append("dump"))
@@ -898,8 +897,7 @@ def test_dump_failure_skips_down(capsys):
     order = []
     def dump(): order.append("dump"); raise subprocess.CalledProcessError(1, "dump")
     with pytest.raises(subprocess.CalledProcessError):
-        orchestrate(project_dir="/p", compose_dir="/i",
-                    run_task_fn=lambda: _report(),
+        orchestrate(run_task_fn=lambda: _report(),
                     up=lambda: order.append("up"),
                     down=lambda: order.append("down"), dump=dump)
     assert "down" not in order
@@ -910,7 +908,7 @@ def test_run_task_raises_still_dumps():
     order = []
     def boom(): order.append("run"); raise RuntimeError("kaboom")
     with pytest.raises(RuntimeError):
-        orchestrate(project_dir="/p", compose_dir="/i", run_task_fn=boom,
+        orchestrate(run_task_fn=boom,
                     up=lambda: order.append("up"),
                     down=lambda: order.append("down"),
                     dump=lambda: order.append("dump"))
@@ -933,15 +931,12 @@ from typing import Callable
 from orchestrator.loop import TaskReport
 
 
-def orchestrate(*, project_dir: str, compose_dir: str,
-                run_task_fn: Callable[[], TaskReport],
+def orchestrate(*, run_task_fn: Callable[[], TaskReport],
                 up: Callable[[], None], down: Callable[[], None],
                 dump: Callable[[], None]) -> TaskReport:
     up()
-    report = None
     try:
-        report = run_task_fn()
-        return report
+        return run_task_fn()
     finally:
         try:
             dump()
@@ -1070,7 +1065,7 @@ def run_one_task(*, project_dir: str, role: str, task_file: str, compose_dir: st
 
     try:
         return orchestrate(
-            project_dir=project_dir, compose_dir=compose_dir, run_task_fn=do_task,
+            run_task_fn=do_task,
             up=lambda: seams.compose_up(compose_dir=compose_dir, project_dir=project_dir),
             down=lambda: seams.compose_down(compose_dir=compose_dir, project_dir=project_dir),
             dump=lambda: seams.snapshot_dump(compose_dir=compose_dir, project_dir=project_dir),
