@@ -125,6 +125,10 @@ flowchart TB
   `python -m memory.startup /project` before the worker, restoring or seeding
   the DB from `PROJECT_DIR/.agent-memory/snapshot.dump`. An `agent-memory`
   named volume is the fallback when `.agent-memory/` is not writable.
+- **Orchestration (Q2):** `agentctl` (host) drives the stack; warm `developer`
+  and `reviewer` containers (same agent-worker image, role-pinned, `sleep
+  infinity`) receive a fresh Claude Agent SDK session per task via `docker
+  compose exec`. Coordination state lives in the `tasks` table.
 
 ## Diagram 2 — How the images are built (one recipe, many roles)
 
@@ -262,6 +266,34 @@ sequenceDiagram
 
 The MCP server exposes: `search_code`, `search_docs`, `get_symbol`,
 `impact_of`, `spec_for`, and `add_knowledge`.
+
+## Diagram 5 — Single-task orchestration (Q2 increment 1)
+
+`agentctl run --role developer path/to/task.md` drives one task end-to-end. A
+host-side Python orchestrator brings the stack up (Q1 `init` restores/seeds
+memory), runs the task on a dedicated `feat/<id>-<tagline>` branch through a
+developer agent, has a reviewer agent check it, auto-iterates up to a cap
+(default 2), then dumps the snapshot and tears down.
+
+```mermaid
+flowchart TB
+    CLI["agentctl run --role developer task.md"] --> UP["docker compose up --wait<br/>(db, embeddings, init, developer, reviewer)"]
+    UP --> ROW["INSERT tasks row → id; create branch feat/&lt;id&gt;-&lt;tagline&gt;"]
+    ROW --> DEV["docker compose exec developer<br/>python -m memory.agent_runner (SDK session)"]
+    DEV --> REV["docker compose exec reviewer<br/>→ VERDICT: approved | needs_changes"]
+    REV -->|approved or cap reached| DUMP["memory.snapshot dump (Q1)"]
+    REV -->|needs_changes & round < cap| DEV
+    DUMP --> DOWN["docker compose down"]
+    DOWN --> REPORT["report branch, review verdict, summary"]
+```
+
+- **Coordination is through the `tasks` table** (in the memory Postgres, so it is
+  snapshotted by Q1) plus the task branch — agents update their row; the
+  orchestrator reads it back between steps.
+- **The orchestrator is plain host-side Python**, not an LLM. Agents run as
+  Claude Agent SDK sessions inside warm per-role containers.
+- **Never lossy:** the snapshot `dump` always runs before `down`; if it fails,
+  the stack stays up and the failure is surfaced.
 
 ## Glossary for a non-technical reader
 
