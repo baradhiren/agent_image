@@ -5,7 +5,7 @@ from memory.db import apply_schema, connect
 
 TABLES = [
     "files", "symbols", "edges", "code_chunks", "doc_chunks",
-    "spec_links", "ingest_queue", "embedding_config",
+    "spec_links", "ingest_queue", "embedding_config", "tasks",
 ]
 
 
