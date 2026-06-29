@@ -37,6 +37,9 @@ COPY memory-service/uv.lock        /opt/memory/uv.lock
 COPY memory-service/src            /opt/memory/src
 COPY memory-service/sql            /opt/memory/sql
 RUN cd /opt/memory && uv sync
+# Claude Agent SDK (Python) for the role runner — added ONLY to the agent-worker
+# image's memory venv, so the lean memory-service image stays SDK-free.
+RUN cd /opt/memory && uv pip install claude-agent-sdk
 
 # Baked role config, skills, entrypoint, and the toolset bootstrap script.
 COPY agent-worker/config        /opt/agent-worker/config

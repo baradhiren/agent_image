@@ -37,5 +37,63 @@ services:
     stdin_open: true
     tty: true
 
+  developer:
+    build:
+      context: .
+      dockerfile: agent-worker/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
+      CODE_EMBED_PROVIDER: remote
+      CODE_EMBED_URL: http://embeddings:80
+      CODE_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      CODE_EMBED_DIM: "384"
+      DOC_EMBED_PROVIDER: remote
+      DOC_EMBED_URL: http://embeddings:80
+      DOC_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      DOC_EMBED_DIM: "384"
+      AGENT_ROLE: developer
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      BOOTSTRAP: ${BOOTSTRAP:-auto}
+    volumes:
+      - ${PROJECT_DIR:-./}:/workspace
+      - mise-data:/opt/mise/data
+    command: ["sleep", "infinity"]   # warm; orchestrator exec's the runner per task
+
+  reviewer:
+    build:
+      context: .
+      dockerfile: agent-worker/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/memory
+      CODE_EMBED_PROVIDER: remote
+      CODE_EMBED_URL: http://embeddings:80
+      CODE_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      CODE_EMBED_DIM: "384"
+      DOC_EMBED_PROVIDER: remote
+      DOC_EMBED_URL: http://embeddings:80
+      DOC_EMBED_MODEL: BAAI/bge-small-en-v1.5
+      DOC_EMBED_DIM: "384"
+      AGENT_ROLE: reviewer
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      BOOTSTRAP: ${BOOTSTRAP:-auto}
+    volumes:
+      - ${PROJECT_DIR:-./}:/workspace
+      - mise-data:/opt/mise/data
+    command: ["sleep", "infinity"]
+
 volumes:
   mise-data:
