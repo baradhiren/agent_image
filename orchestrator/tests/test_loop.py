@@ -89,3 +89,14 @@ def test_developer_failure_marks_failed(tmp_path):
                       run_reviewer=lambda t, r: RunnerResult(True, 0), cap=2)
     assert report.status == "failed"
     assert report.rounds == 1
+
+
+def test_reviewer_failure_marks_failed(tmp_path):
+    repo = FakeRepo([])
+    report = run_task(_write_task(tmp_path), "developer", repo=repo,
+                      make_branch=lambda b: None,
+                      run_developer=lambda t, r: RunnerResult(True, 0),
+                      run_reviewer=lambda t, r: RunnerResult(ok=False, exit_code=1),
+                      cap=2)
+    assert report.status == "failed"
+    assert report.rounds == 1
