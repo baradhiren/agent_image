@@ -121,6 +121,10 @@ flowchart TB
 - **How the secret is passed:** the subscription token lives only in `.env`
   (gitignored) and is injected as an env var into **only** the agent-worker
   container — the database, worker, and embeddings never see it.
+- **Per-project memory:** a one-shot `init` service (same memory image) runs
+  `python -m memory.startup /project` before the worker, restoring or seeding
+  the DB from `PROJECT_DIR/.agent-memory/snapshot.dump`. An `agent-memory`
+  named volume is the fallback when `.agent-memory/` is not writable.
 
 ## Diagram 2 — How the images are built (one recipe, many roles)
 
@@ -133,7 +137,7 @@ flowchart LR
     subgraph SRC["📝 Build recipes"]
         DF1["memory-service/Dockerfile"]
         DF2["agent-worker/Dockerfile"]
-        PGIMG["pgvector/pgvector:pg16<br/>pulled from registry"]
+        PGIMG["pgvector/pgvector:0.8.2-pg18<br/>pulled from registry"]
     end
 
     subgraph IMAGES["🧱 Images"]
@@ -143,6 +147,7 @@ flowchart LR
 
     subgraph SERVICES["🚀 Running services"]
         S_DB["db"]
+        S_INIT["init → runs startup"]
         S_EMB["embeddings → runs embeddings_server"]
         S_MEM["memory → runs mcp_server"]
         S_WK["worker → runs run_worker"]
@@ -155,6 +160,7 @@ flowchart LR
     MIMG -->|"same image,<br/>different command"| S_EMB
     MIMG --> S_MEM
     MIMG --> S_WK
+    MIMG --> S_INIT
     AIMG --> S_AW
 ```
 
@@ -192,6 +198,38 @@ Notes:
   every supported language.
 - Supported today: Python and TypeScript/JavaScript for the code graph;
   Markdown for docs.
+
+## Diagram 3b — Startup: per-project snapshot restore-or-seed
+
+Memory is **per-project**, co-located with the source under a self-ignoring
+`PROJECT_DIR/.agent-memory/` (a `.gitignore` of `*`), and snapshot-able. A
+one-shot `init` service runs before the steady worker:
+
+```mermaid
+flowchart TB
+    UP["docker compose up"] --> RESET["reset live DB<br/>(DROP SCHEMA public)"]
+    RESET --> PROBE["probe .agent-memory writable?"]
+    PROBE -->|"no"| FB["fall back to named volume<br/>agent-memory + warn"]
+    PROBE -->|"yes"| HOME["home = PROJECT_DIR/.agent-memory"]
+    FB --> DECIDE
+    HOME --> DECIDE{"snapshot.dump present<br/>AND meta.json compatible?"}
+    DECIDE -->|"yes"| RESTORE["pg_restore (graph + embeddings + spec_links)"]
+    DECIDE -->|"no"| SEED["create tables + reconcile (seed)"]
+    RESTORE --> CATCH["incremental reconcile (catch up)"]
+    SEED --> CATCH
+```
+
+- **Isolation:** the live Postgres volume is reset on every start, so the
+  on-disk snapshot — not whatever the global volume held — is the source of
+  truth. Point `PROJECT_DIR` at a different repo and you get that repo's memory.
+- **Derivable vs irreplaceable:** the structure graph + chunks + embeddings are
+  rebuildable by `reconcile`; agent-authored `spec_links` (`add_knowledge`) are
+  not, so the snapshot protects them. A corrupt/incompatible snapshot degrades
+  to a fresh seed — working-but-loud, never working-but-lossy.
+- **Explicit save:** `python -m memory.snapshot dump PROJECT_DIR/.agent-memory`
+  (atomic; exits non-zero on failure) is called before teardown. The
+  compatibility guard (`meta.json`: schema version, pg major, code/doc model+dim)
+  refuses a restore that would mix embedding dimensions.
 
 ## Diagram 4 — Data flow B: the agent doing work (grounded, not guessing)
 

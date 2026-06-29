@@ -219,7 +219,15 @@ class Repository:
                 "INSERT INTO embedding_config (collection, provider, model, dim) VALUES (%s, %s, %s, %s)",
                 (collection, provider, model, dim),
             )
-        elif existing != wanted:
+        elif existing == wanted:
+            return
+        elif existing["model"] == model and existing["dim"] == dim:
+            # provider-only change is safe (same model+dim = same vector space)
+            self._conn.execute(
+                "UPDATE embedding_config SET provider = %s WHERE collection = %s",
+                (provider, collection),
+            )
+        else:
             raise EmbeddingConfigMismatch(
                 f"{collection}: stored {existing} != configured {wanted}; reconcile/re-embed required"
             )

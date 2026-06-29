@@ -19,3 +19,12 @@ def apply_schema(conn: psycopg.Connection, code_dim: int = 384, doc_dim: int = 3
     sql = SCHEMA_FILE.read_text()
     sql = sql.replace(":CODE_DIM", str(code_dim)).replace(":DOC_DIM", str(doc_dim))
     conn.execute(sql)
+
+
+def reset_db(conn: psycopg.Connection) -> None:
+    """Drop every memory table (and the vector extension's objects) so the next
+    restore/seed starts from a clean slate. This is what enforces per-project
+    isolation: the snapshot — not the previous volume contents — is the source
+    of truth on every start."""
+    conn.execute("DROP SCHEMA public CASCADE")
+    conn.execute("CREATE SCHEMA public")
