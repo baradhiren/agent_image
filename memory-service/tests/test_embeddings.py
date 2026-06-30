@@ -39,6 +39,33 @@ def test_remote_posts_to_tei(monkeypatch):
     assert captured["json"] == {"inputs": ["hi"]}
 
 
+def test_remote_embed_batches_large_input(monkeypatch):
+    calls = []
+
+    class FakeResp:
+        def __init__(self, n):
+            self._n = n
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [[0.0] * 384 for _ in range(self._n)]
+
+    def fake_post(url, json, timeout):
+        n = len(json["inputs"])
+        calls.append(n)
+        return FakeResp(n)
+
+    monkeypatch.setattr(remote_mod.httpx, "post", fake_post)
+    p = RemoteEmbeddingProvider("http://embeddings:80", dim=384, batch_size=128)
+    out = p.embed(["t"] * 300)
+    assert len(out) == 300
+    # 300 inputs split into 128 + 128 + 44 — never one unbounded request.
+    assert calls == [128, 128, 44]
+    assert p.embed([]) == []
+
+
 def test_factory_selects_provider():
     assert isinstance(
         build_embedder(EmbedConfig("local", "BAAI/bge-small-en-v1.5", 384, None)),
